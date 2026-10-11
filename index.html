@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>美签通过率 智能测评</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      colors: {
+        primary: "#3b56ff",
+        "primary-hover": "#2a45e5",
+        pageBg: "#f8f9fe",
+        bannerRed: "#b91c1c",
+        bannerRedDeep: "#dc2626",
+        bannerBg: "#fef2f2",
+      },
+      fontFamily: {
+        sans: ["system-ui", "-apple-system", "Segoe UI", "sans-serif"],
+      },
+    },
+  }
+}
+</script>
+<style>
+* {
+  -webkit-tap-highlight-color: transparent !important;
+  transition: none !important;
+}
+body {
+  background: #f8f9fe;
+  font-family: system-ui, sans-serif;
+}
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+/* DELETE all fade / slide animation to remove flash */
+.progress-bar-fill {
+  transition: none !important;
+}
+.ring-bg { stroke: #eef1f6; }
+.ring-progress {
+  transition: none !important;
+  transform: rotate(-90deg);
+  transform-origin: 50% 50%;
+}
+.option-btn:active {
+  background: unset !important;
+  filter: none !important;
+  opacity: 1 !important;
+  box-shadow: none !important;
+}
+</style>
+</head>
+<body class="min-h-screen pb-24">
+<!-- 顶部促销横幅 -->
+<div id="topBanner" style="background:#fef2f2;color:#b91c1c;font-weight:700;letter-spacing:.5px;text-align:center;padding:10px 16px;border-top:2px solid #dc2626;border-bottom:2px solid #dc2626;white-space:nowrap;line-height:1.4;" class="text-[15px] sm:text-[16px]">
+  🎁 带图五星好评，联系客服 <span style="color:#dc2626">horsemonkey222</span>，<span style="color:#dc2626">立返现金红包</span>！
+</div>
+
+<!-- 页面容器 -->
+<div id="app" class="max-w-3xl mx-auto px-4 pt-6 pb-24"></div>
+
+<script>
+/* ===================== 题库 ===================== */
+const COMMON_QUESTIONS = [
+  {
+    id:1, key:"age_range", title:"年龄段",
+    options:[
+      {label:"18-23岁", value:"18-23", score:7},
+      {label:"24-30岁", value:"24-30", score:8},
+      {label:"31-45岁", value:"31-45", score:10},
+      {label:"46-60岁", value:"46-60", score:8},
+      {label:"60岁以上", value:"60+", score:6}
+    ],
+    rationale:{
+      body:"年龄是签证官判断回国约束力的重要指标，20-50岁是移民倾向重点关注年龄段。",
+      warnings:["18-23岁单身人群社会约束力偏弱；60岁以上申请人需要额外准备健康证明与资金来源证明。"]
+    }
+  },
+  {
+    id:2, key:"gender", title:"性别",
+    options:[
+      {label:"男", value:"male", score:7},
+      {label:"女", value:"female", score:8}
+    ]
+  },
+  {
+    id:3, key:"household", title:"户籍所在地",
+    options:[
+      {label:"一线城市", value:"first-tier", score:10},
+      {label:"新一线/二线城市", value:"new-second-tier", score:8},
+      {label:"三四线城市", value:"third-fourth-tier", score:6},
+      {label:"县城/农村", value:"rural-county", score:4}
+    ],
+    rationale:{
+      body:"户籍地域用于评估申请人在国内的社会根基与经济约束。",
+      warnings:["福建福清、长乐，河北、河南部分地区，辽宁属于敏感区域；县城农村户籍会明显拉低评估分数。"]
+    }
+  },
+  {
+    id:4, key:"marriage", title:"婚姻状况",
+    options:[
+      {label:"已婚", value:"married", score:10},
+      {label:"未婚", value:"unmarried", score:6},
+      {label:"离异", value:"divorced", score:5},
+      {label:"丧偶", value:"widowed", score:5}
+    ],
+    rationale:{
+      body:"稳定婚姻与家庭是最强回国约束力之一。",
+      warnings:["单身青年移民倾向风险更高；离异、丧偶申请人需要额外准备资产证明支撑回国约束力。"]
+    }
+  },
+  {
+    id:5, key:"visa_history", title:"美签申请经历",
+    options:[
+      {label:"从未申请过美签", value:"no-application", score:6},
+      {label:"曾获批，签证仍有效", value:"approved-valid", score:10},
+      {label:"曾被拒签", value:"rejected", score:2},
+      {label:"曾经获批，签证已过期", value:"approved-expired", score:7}
+    ],
+    rationale:{
+      body:"过往美国签证记录是签证官重点参考的信用记录。",
+      warnings:["拒签记录属于重大扣分项；多次拒签会在领馆系统留下标记，后续审核更严格。"]
+    }
+  },
+  {
+    id:6, key:"travel_history", title:"出境旅行经历",
+    options:[
+      {label:"从未出过国", value:"no-overseas", score:2},
+      {label:"仅去过发展中国家", value:"developing", score:5},
+      {label:"去过发达国家", value:"developed", score:8},
+      {label:"多次多国发达国家出行", value:"multi-developed", score:10}
+    ],
+    rationale:{
+      body:"良好出入境记录，证明真实出境旅行习惯。",
+      warnings:["无出境经历扣分幅度大；仅去过发展中国家，说服力有限。"]
+    }
+  },
+  {
+    id:7, key:"purpose", title:"赴美目的",
+    options:[
+      {label:"旅游", value:"tour", score:8},
+      {label:"商务", value:"business", score:8},
+      {label:"探亲", value:"family-visit", score:5},
+      {label:"留学", value:"study", score:6},
+      {label:"就医", value:"medical", score:3},
+      {label:"参加国际会议", value:"conference", score:7}
+    ],
+    rationale:{
+      body:"申请目的是214b移民倾向审核核心。",
+      warnings:["探亲（直系亲属）容易被怀疑移民倾向；就医申请审核极严格，必须准备完整医疗证明材料。"]
+    }
+  },
+  {
+    id:8, key:"duration", title:"计划在美国停留时长",
+    options:[
+      {label:"1周以内", value:"<1w", score:9},
+      {label:"1~2周", value:"1-2w", score:9},
+      {label:"2~4周", value:"2-4w", score:7},
+      {label:"1~3个月", value:"1-3m", score:5},
+      {label:"3个月以上", value:">3m", score:3}
+    ],
+    rationale:{
+      body:"停留时长必须和出行目的、假期、收入匹配。",
+      warnings:["超过3个月停留，极易被怀疑在美打工或滞留；停留时长和你的假期收入不匹配会被重点质疑。"]
+    }
+  },
+  {
+    id:9, key:"us_relatives", title:"在美国是否有亲属",
+    options:[
+      {label:"无任何亲属", value:"none", score:10},
+      {label:"远亲", value:"distant", score:7},
+      {label:"直系亲属", value:"immediate", score:4},
+      {label:"配偶或子女在美国", value:"spouse-child", score:2},
+      {label:"计划移民美国", value:"plan-immigrate", score:1}
+    ],
+    rationale:{
+      body:"美国境内亲属直接影响移民倾向判断。",
+      warnings:["直系亲属、配偶子女在美国属于高风险；明确计划移民基本等同于拒签。"]
+    }
+  },
+  {
+    id:10, key:"criminal_record", title:"有无犯罪记录",
+    options:[
+      {label:"无任何犯罪记录", value:"none", score:10},
+      {label:"轻微违法记录", value:"minor", score:3},
+      {label:"严重刑事犯罪", value:"serious", score:0}
+    ],
+    rationale:{
+      body:"属于硬性审核项。",
+      warnings:["隐瞒记录会导致终身拒签；存在严重刑事犯罪基本无法获得签证。"]
+    }
+  },
+  {
+    id:11, key:"travel_mode", title:"本次出行方式",
+    options:[
+      {label:"独自出行", value:"alone", score:5},
+      {label:"和配偶同行", value:"spouse", score:9},
+      {label:"和家人同行", value:"family", score:8},
+      {label:"和朋友同行", value:"friend", score:7},
+      {label:"跟旅行团", value:"group", score:6}
+    ]
+  }
+];
+
+const ADULT_QUESTIONS = [
+  {id:12, key:"employment", title:"就业状况", options:[
+    {label:"在职", value:"employed", score:10},
+    {label:"自主创业", value:"business", score:7},
+    {label:"失业", value:"unemployed", score:2},
+    {label:"退休", value:"retired", score:6},
+    {label:"学生", value:"student", score:4}
+  ],
+  rationale:{body:"稳定在职是最强回国约束力。",warnings:["失业容易被怀疑赴美打工移民；入职不满3个月、频繁跳槽会降低评分。"]}},
+  {id:13, key:"employer_type", title:"单位类型", options:[
+    {label:"国企/政府机关", value:"gov-soe", score:10},
+    {label:"外企", value:"foreign", score:9},
+    {label:"大型民企", value:"large-private", score:8},
+    {label:"中小民企", value:"sm-private", score:5},
+    {label:"自由职业", value:"freelance", score:4}
+  ]},
+  {id:14, key:"income", title:"月收入", options:[
+    {label:"5k以下", value:"<5k", score:2},
+    {label:"5k-10k", value:"5-10k", score:4},
+    {label:"10k-20k", value:"10-20k", score:7},
+    {label:"20k-50k", value:"20-50k", score:9},
+    {label:"50k以上", value:">50k", score:10}
+  ]},
+  {id:15, key:"work_years", title:"工作年限", options:[
+    {label:"1年内", value:"<1y", score:4},
+    {label:"1~3年", value:"1-3y", score:6},
+    {label:"3~5年", value:"3-5y", score:8},
+    {label:"5~10年", value:"5-10y", score:10},
+    {label:"10年以上", value:">10y", score:9}
+  ]},
+  {id:16, key:"education", title:"最高学历", options:[
+    {label:"高中", value:"high", score:4},
+    {label:"大专", value:"college", score:6},
+    {label:"本科", value:"bachelor", score:8},
+    {label:"硕士", value:"master", score:9},
+    {label:"博士", value:"phd", score:10}
+  ]},
+  {id:17, key:"property", title:"国内房产", options:[
+    {label:"无房产", value:"none", score:3},
+    {label:"1套房产", value:"one", score:8},
+    {label:"2套及以上房产", value:"multiple", score:10}
+  ],
+  rationale:{body:"房产是最重要固定资产回国约束力证据。",warnings:["无房产会明显削弱国内约束力；房产价值越高、位置越好，约束力越强。"]}},
+  {id:18, key:"vehicle", title:"车辆", options:[
+    {label:"无车", value:"none", score:4},
+    {label:"1辆车", value:"one", score:8},
+    {label:"2辆及以上", value:"multiple", score:10}
+  ]},
+  {id:19, key:"savings", title:"银行存款", options:[
+    {label:"5万以下", value:"<5w", score:2},
+    {label:"5万~20万", value:"5-20w", score:5},
+    {label:"20万~50万", value:"20-50w", score:7},
+    {label:"50万~100万", value:"50-100w", score:9},
+    {label:"100万以上", value:">100w", score:10}
+  ]},
+  {id:20, key:"children", title:"子女情况", options:[
+    {label:"无子女", value:"none", score:5},
+    {label:"1个子女", value:"one", score:9},
+    {label:"2个及以上子女", value:"multiple", score:10}
+  ]},
+  {id:21, key:"position_level", title:"职位级别", options:[
+    {label:"基层员工", value:"entry", score:4},
+    {label:"中级职员", value:"mid", score:6},
+    {label:"高级职员", value:"senior", score:8},
+    {label:"中层管理", value:"manager", score:9},
+    {label:"高管/企业主", value:"exec", score:10}
+  ]},
+  {id:22, key:"social_media", title:"社交媒体活跃度", options:[
+    {label:"基本不用", value:"none", score:4},
+    {label:"少量使用", value:"light", score:7},
+    {label:"比较活跃", value:"active", score:8},
+    {label:"非常活跃", value:"high", score:6}
+  ]},
+  {id:23, key:"cost_bearer", title:"赴美费用承担方", options:[
+    {label:"本人自费", value:"self", score:10},
+    {label:"公司承担", value:"company", score:8},
+    {label:"家人承担", value:"family", score:4}
+  ]}
+];
+
+const STUDENT_QUESTIONS = [
+  {id:12, key:"grade", title:"就读年级", options:[
+    {label:"大一", value:"freshman", score:4},
+    {label:"大二", value:"sophomore", score:9},
+    {label:"大三", value:"junior", score:10},
+    {label:"大四", value:"senior", score:4},
+    {label:"研一/研二", value:"master-early", score:7},
+    {label:"博士在读", value:"phd-stu", score:8},
+    {label:"已毕业其他", value:"grad-other", score:5}
+  ]},
+  {id:13, key:"university_tier", title:"院校层次", options:[
+    {label:"C9院校", value:"c9", score:10},
+    {label:"985院校", value:"985", score:9},
+    {label:"211院校", value:"211", score:8},
+    {label:"普通公办本科", value:"public-regular", score:6},
+    {label:"民办本科", value:"private", score:4},
+    {label:"专科院校", value:"college", score:3},
+    {label:"高中在读", value:"high-school", score:5}
+  ],
+  rationale:{body:"院校层次代表学术约束力。",warnings:["实体清单院校会触发行政审查；民办/专科学生国内约束力偏弱。"]}},
+  {id:14, key:"major", title:"专业类别", options:[
+    {label:"理工科STEM", value:"stem", score:9},
+    {label:"商科/经济/金融", value:"business", score:8},
+    {label:"文科/艺术/人文", value:"art-human", score:7},
+    {label:"医学/生命科学", value:"bio-med", score:8},
+    {label:"其他专业", value:"other", score:5}
+  ],
+  rationale:{body:"专业敏感度直接影响签证审核。",warnings:["航空航天、核工程、AI、半导体、兵器、电子信息极易触发行政审查Check；国防七子理工科几乎必Check。"]}},
+  {id:15, key:"parent_finance", title:"父母经济状况", options:[
+    {label:"非常富裕", value:"very-rich", score:10},
+    {label:"条件较好", value:"good", score:8},
+    {label:"中等水平", value:"mid", score:6},
+    {label:"一般", value:"fair", score:4},
+    {label:"比较困难", value:"poor", score:2}
+  ]},
+  {id:16, key:"parent_occupation", title:"父母职业", options:[
+    {label:"公务员/国企/事业单位", value:"gov-soe", score:10},
+    {label:"企业主经商", value:"business-owner", score:8},
+    {label:"外企专业人士", value:"foreign-pro", score:9},
+    {label:"普通公司职员", value:"staff", score:6},
+    {label:"个体经营", value:"self-emp", score:5},
+    {label:"务工务农/其他", value:"farmer-worker", score:3}
+  ]},
+  {id:17, key:"family_property", title:"家庭房产", options:[
+    {label:"无房产", value:"none", score:3},
+    {label:"1套房产", value:"one", score:7},
+    {label:"2套及以上房产", value:"multiple", score:10}
+  ]},
+  {id:18, key:"funding_source", title:"赴美费用来源", options:[
+    {label:"本人积蓄/兼职收入", value:"self-saving", score:6},
+    {label:"父母资助", value:"parents", score:8},
+    {label:"其他亲属资助", value:"other-relative", score:4},
+    {label:"奖学金/助学金", value:"scholarship", score:7}
+  ]},
+  {id:19, key:"academic_rank", title:"学业成绩排名", options:[
+    {label:"年级前10%", value:"top10", score:10},
+    {label:"年级前30%", value:"top30", score:8},
+    {label:"中等", value:"mid", score:6},
+    {label:"中下/较差", value:"low", score:3},
+    {label:"不适用", value:"na", score:5}
+  ]},
+  {id:20, key:"internship", title:"实习经验", options:[
+    {label:"无实习", value:"none", score:3},
+    {label:"6个月以内实习", value:"<6m", score:6},
+    {label:"6~12个月实习", value:"6-12m", score:8},
+    {label:"1年以上实习", value:">1y", score:10}
+  ]},
+  {id:21, key:"post_grad_plan", title:"毕业后规划", options:[
+    {label:"明确回国发展", value:"return-cn", score:10},
+    {label:"继续深造读书", value:"further-study", score:7},
+    {label:"尚未确定", value:"uncertain", score:4},
+    {label:"希望在美国工作", value:"work-us", score:2}
+  ],
+  rationale:{body:"学生申请人，毕业后规划是214b移民倾向核心判断点。",warnings:["希望在美国工作基本等同于承认移民倾向；规划模糊会被怀疑借读书滞留美国。"]}},
+  {id:22, key:"extracurricular", title:"课外活动/竞赛", options:[
+    {label:"无", value:"none", score:3},
+    {label:"社团普通成员", value:"club-member", score:6},
+    {label:"社团负责人/学生会干部", value:"club-leader", score:8},
+    {label:"竞赛奖项/学术成果", value:"award", score:10}
+  ]},
+  {id:23, key:"family_children", title:"家庭子女状况", options:[
+    {label:"独生子女", value:"only-child", score:10},
+    {label:"1个兄弟姐妹", value:"one-sibling", score:7},
+    {label:"2个及以上兄弟姐妹", value:"multi-sibling", score:5}
+  ]}
+];
+
+/* ===================== 状态 ===================== */
+let state = {
+  page: "home",
+  answers: {},
+  currentIndex: 0,
+  questions: [],
+  branch: "adult",
+  result: null
+};
+
+/* ===================== 工具函数 ===================== */
+function $(id){ return document.getElementById(id); }
+
+function getQuestions(){
+  const age = state.answers[1];
+  if(age === "18-23"){
+    return { questions: [...COMMON_QUESTIONS, ...STUDENT_QUESTIONS], branch: "student" };
+  }
+  return { questions: [...COMMON_QUESTIONS, ...ADULT_QUESTIONS], branch: "adult" };
+}
+
+function calcScore(){
+  const { questions, branch } = getQuestions();
+  let total = 0, maxScore = 0;
+  const answerRecords = [];
+
+  questions.forEach(q=>{
+    maxScore += Math.max(...q.options.map(o=>o.score));
+    const selectedValue = state.answers[q.id];
+    if(selectedValue){
+      const option = q.options.find(o=>o.value === selectedValue);
+      if(option){
+        total += option.score;
+        answerRecords.push({ question_id: q.id, question_title: q.title, value: option.value, score: option.score });
+        return;
+      }
+    }
+    answerRecords.push({ question_id: q.id, question_title: q.title, value: "未作答", score: 0 });
+  });
+
+  const scorePercentage = Math.round((total / maxScore) * 100);
+  const riskLevel = scorePercentage >= 70 ? "low" : scorePercentage >= 50 ? "medium" : "high";
+
+  return { total, maxScore, scorePercentage, riskLevel, answerRecords, questions, branch };
+}
+
+function has(answers, qId, ...targetValues){
+  return targetValues.includes(answers[qId]);
+}
+
+function generatePresetAnalysis(scorePercentage, riskLevel, answers, branch){
+  let overall = "";
+  if(riskLevel === "low"){
+    overall = "✅ 你的背景条件整体优秀，回国约束力充足，移民倾向风险较低。只要面试表现稳定、材料真实，美签通过概率较高。面试保持诚实简洁，不要主动提供多余信息。";
+  } else if(riskLevel === "medium"){
+    overall = "⚠️ 你的背景属于中等风险，存在部分薄弱点。签证官会重点核查你的回国约束力，建议针对性补齐证明材料，提前准备面试问答，规避敏感表述。";
+  } else {
+    overall = "❌ 当前背景移民倾向风险偏高。签证官会重点审视你的国内约束力，建议谨慎申请，优先补强薄弱项，不要盲目递交申请。";
+  }
+
+  const strengthRules = [];
+  const riskRules = [];
+
+  if(branch === "adult"){
+    strengthRules.push(
+      [a=>has(a,1,"31-45"),"年龄31-45岁，处于事业稳定黄金期，回国约束力较强"],
+      [a=>has(a,3,"first-tier"),"一线城市户籍，国内经济与社会根基稳定"],
+      [a=>has(a,4,"married"),"已婚，家庭构成强回国约束"],
+      [a=>has(a,5,"approved-valid"),"曾获批有效美签，签证信用良好"],
+      [a=>has(a,6,"developed","multi-developed"),"拥有发达国家出境记录，良好旅行信用"],
+      [a=>has(a,12,"employed"),"在职，稳定工作是核心回国约束力"],
+      [a=>has(a,13,"gov-soe","foreign"),"就职国企/外企，工作稳定性强"],
+      [a=>has(a,14,">50k"),"月收入高，经济实力充足"],
+      [a=>has(a,15,"5-10y",">10y"),"工作年限长，国内职业根基牢固"],
+      [a=>has(a,16,"master","phd"),"高学历，国内职业发展空间好"],
+      [a=>has(a,17,"one","multiple"),"拥有国内房产，固定资产证明充分"],
+      [a=>has(a,19,"50-100w",">100w"),"银行存款充足，资金证明有力"],
+      [a=>has(a,20,"one","multiple"),"有子女，家庭牵挂增强回国约束"],
+      [a=>has(a,23,"self"),"本次出行全部费用自费，资金可信度高"]
+    );
+    riskRules.push(
+      [a=>has(a,1,"60+"),"60岁以上，需要准备健康与资金证明"],
+      [a=>has(a,3,"rural-county"),"县城农村户籍，国内社会约束力偏弱"],
+      [a=>has(a,5,"rejected"),"存在美签拒签历史，审核会更严格"],
+      [a=>has(a,9,"immediate","spouse-child","plan-immigrate"),"美国有直系亲属，移民倾向风险提升"],
+      [a=>has(a,12,"unemployed","student"),"失业/学生身份，缺少稳定工作约束"],
+      [a=>has(a,13,"sm-private","freelance"),"中小民企/自由职业，稳定性偏弱"],
+      [a=>has(a,14,"<5k","5-10k"),"收入偏低，资金证明说服力弱"],
+      [a=>has(a,15,"<1y","1-3y"),"工作时间短，国内职业根基不稳"],
+      [a=>has(a,16,"high","college"),"学历偏低，国内发展空间有限"],
+      [a=>has(a,17,"none"),"无国内房产，缺少固定资产约束"],
+      [a=>has(a,19,"<5w","5-20w"),"存款不足，资金证明薄弱"],
+      [a=>has(a,23,"family"),"由家人承担全部费用，约束力下降"]
+    );
+  } else {
+    strengthRules.push(
+      [a=>has(a,12,"sophomore","junior"),"大二/大三在读，学业状态稳定"],
+      [a=>has(a,13,"c9","985","211"),"就读国内重点高校，学术约束力强"],
+      [a=>has(a,15,"very-rich","good"),"父母经济条件良好，资金保障充足"],
+      [a=>has(a,16,"gov-soe","foreign-pro"),"父母职业稳定，国内家庭根基强"],
+      [a=>has(a,17,"one","multiple"),"家庭拥有房产，固定资产充足"],
+      [a=>has(a,19,"top10","top30"),"学业成绩优秀，国内学业约束力强"],
+      [a=>has(a,20,"6-12m",">1y"),"拥有实习经历，国内职业规划清晰"],
+      [a=>has(a,21,"return-cn"),"明确毕业后回国发展，消除移民倾向"],
+      [a=>has(a,22,"award"),"拥有竞赛/学术成果，背景优秀"],
+      [a=>has(a,23,"only-child"),"独生子女，家庭牵挂在国内"]
+    );
+    riskRules.push(
+      [a=>has(a,12,"freshman","senior"),"大一/大四，学业稳定性偏弱"],
+      [a=>has(a,13,"private","college"),"民办/专科院校，学术约束力弱"],
+      [a=>has(a,15,"fair","poor"),"家庭经济条件一般/困难，资金证明压力大"],
+      [a=>has(a,16,"farmer-worker"),"父母务工务农，国内根基偏弱"],
+      [a=>has(a,17,"none"),"家庭无房产，缺少固定资产支撑"],
+      [a=>has(a,19,"low"),"学业成绩较差，国内学业约束不足"],
+      [a=>has(a,20,"none"),"无实习经历，国内职业规划模糊"],
+      [a=>has(a,21,"uncertain","work-us"),"毕业后规划不确定/希望留美工作，移民倾向风险高"],
+      [a=>has(a,22,"none"),"无课外活动，背景亮点不足"],
+      [a=>has(a,23,"multi-sibling"),"多名兄弟姐妹，家庭国内牵挂偏弱"]
+    );
+  }
+
+  const strengths = [];
+  for(const [fn, text] of strengthRules){
+    if(fn(state.answers)) strengths.push(text);
+    if(strengths.length >= 6) break;
+  }
+  if(strengths.length === 0) strengths.push("暂无明显加分项，建议挖掘自身国内约束证据。");
+
+  const risks = [];
+  for(const [fn, text] of riskRules){
+    if(fn(state.answers)) risks.push(text);
+    if(risks.length >= 6) break;
+  }
+  if(risks.length === 0) risks.push("无明显风险点，保持材料真实，面试简洁诚实。");
+
+  const suggestions = [];
+  if(riskLevel === "low"){
+    suggestions.push("面试自信、诚实，回答简洁，不要主动多说额外信息");
+    suggestions.push("所有申请材料保证真实，不要编造资产、出境记录");
+    suggestions.push("提前演练高频面试问题，控制回答时长");
+  } else if(riskLevel === "medium"){
+    suggestions.push("重点补强国内约束力证明：房产、存款、在职证明、家庭材料");
+    suggestions.push("面试回答紧扣“一定会回国”，不要提及任何留美想法");
+    suggestions.push("材料全部准备原件，面谈时按需主动出示");
+  } else {
+    suggestions.push("建议暂缓申请，优先补齐国内约束力短板，不要盲目递签");
+    suggestions.push("梳理薄弱项，积累出境记录、资产、稳定工作等加分背景");
+    suggestions.push("如果存在拒签史，一定要深度复盘上次拒签原因再二次申请");
+  }
+
+  return { overall, strengths, risks, suggestions };
+}
+
+/* ===================== 页面渲染 ===================== */
+function render(){
+  const app = $("app");
+  if(state.page === "home") app.innerHTML = renderHome();
+  if(state.page === "quiz") app.innerHTML = renderQuiz();
+  if(state.page === "result") app.innerHTML = renderResult();
+  bindEvents();
+}
+
+function renderHome(){
+  return `
+    <div>
+      <div class="flex justify-center mt-4">
+        <span class="inline-flex items-center gap-1 bg-blue-50 text-primary px-3 py-1 rounded-full text-sm font-medium">
+          ✈️ 专业美签通过率评估工具
+        </span>
+      </div>
+
+      <h1 class="text-3xl sm:text-4xl font-bold text-gray-900 text-center mt-6">
+        美签通过率 <span style="color:#3b56ff">智能测评</span>
+      </h1>
+      <p class="text-gray-600 text-center mt-3">
+        基于签证官审核逻辑，全面评估您的背景条件，AI生成个性化提升方案
+      </p>
+
+      <div class="mt-8 flex justify-center">
+        <button id="startQuiz" class="bg-primary hover:bg-primary-hover text-white px-8 py-3 rounded-xl font-medium text-lg">
+          开始测评
+        </button>
+      </div>
+
+      <div class="flex flex-wrap justify-center gap-3 mt-6 text-sm text-primary">
+        <span>✅ 23大核心维度</span>
+        <span>✅ AI智能建议</span>
+        <span>✅ 个性化报告</span>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-12">
+        ${featureCard("📊","23维度评估","全面覆盖年龄、经济、社会约束力等核心维度")}
+        ${featureCard("🧠","AI智能分析","基于签证官审核逻辑生成个性化提升方案")}
+        ${featureCard("⏱️","3分钟完成","简洁问卷快速完成，即时获得评估结果")}
+      </div>
+
+      <div class="mt-14">
+        <h2 class="text-xl font-bold text-gray-900 text-center mb-6">测评三步流程</h2>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 items-stretch">
+          ${stepCard("01","回答23个问题","选择符合您实际情况的选项")}
+          ${stepCard("02","系统自动评分","基于签证审核逻辑计算通过率")}
+          ${stepCard("03","AI生成报告","获取个性化分析与提升建议")}
+        </div>
+      </div>
+
+      <div class="mt-12 text-center text-gray-500 text-sm">
+        🛡️ 测评结果仅供参考，不构成签证申请承诺
+      </div>
+    </div>
+  `;
+}
+
+function featureCard(icon, title, desc){
+  return `
+    <div class="bg-white rounded-2xl border border-gray-50 shadow-sm p-5">
+      <div class="text-2xl">${icon}</div>
+      <h3 class="font-bold text-gray-900 mt-2">${title}</h3>
+      <p class="text-gray-500 text-sm mt-1">${desc}</p>
+    </div>
+  `;
+}
+
+function stepCard(num, title, desc){
+  return `
+    <div class="bg-white rounded-2xl border border-gray-50 shadow-sm p-5 flex flex-col">
+      <div class="text-4xl text-blue-100 font-bold">${num}</div>
+      <h3 class="font-bold mt-2">${title}</h3>
+      <p class="text-gray-500 text-sm mt-1">${desc}</p>
+    </div>
+  `;
+}
+
+function renderQuiz(){
+  const { questions, branch } = getQuestions();
+  state.questions = questions;
+  state.branch = branch;
+
+  if(questions.length === 0){
+    return `<div class="text-center py-20 text-gray-500">加载题目失败</div>`;
+  }
+
+  const currentQ = questions[state.currentIndex];
+  const total = questions.length;
+  const progress = ((state.currentIndex + 1) / total) * 100;
+  const selectedValue = state.answers[currentQ.id];
+  const isLast = state.currentIndex === total - 1;
+
+  return `
+    <div>
+      <!-- 吸顶进度条 -->
+      <div class="sticky top-0 z-30 bg-white border-b border-gray-100 rounded-t-2xl shadow-sm">
+        <div class="max-w-2xl mx-auto px-4 py-3 flex items-center gap-3">
+          <button id="goPrev" class="text-gray-600 hover:text-primary text-lg">←</button>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center justify-between text-sm">
+              <span class="text-gray-500 tabular-nums">${String(state.currentIndex+1).padStart(2,"0")} / ${String(total).padStart(2,"0")}</span>
+              <span class="text-gray-400">${branch === "student" ? "学生版" : "成人版"}</span>
+            </div>
+            <div class="text-gray-900 font-semibold truncate mt-1">${currentQ.title}</div>
+          </div>
+        </div>
+        <div class="h-[1.5px] bg-gray-100">
+          <div class="progress-bar-fill h-full bg-primary" style="width:${progress}%"></div>
+        </div>
+      </div>
+
+      <!-- 题目区 -->
+      <div class="max-w-2xl mx-auto px-4 py-6">
+        <h2 class="text-xl font-bold text-gray-900">${currentQ.title}</h2>
+
+        ${currentQ.rationale ? `
+          <div class="mt-4 bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-600">
+            <div class="font-bold mb-1">⚠️ 评分原理</div>
+            <div class="mb-2">${currentQ.rationale.body}</div>
+            <ul class="space-y-1 list-disc pl-5">
+              ${currentQ.rationale.warnings.map(w=>`<li>${w}</li>`).join("")}
+            </ul>
+          </div>
+        ` : ""}
+
+        <div class="mt-5 space-y-3">
+          ${currentQ.options.map(opt=>`
+            <button class="option-btn w-full text-left p-4 rounded-xl border-2 ${selectedValue === opt.value ? "border-primary bg-blue-50 text-primary font-semibold" : "border-gray-100 bg-white hover:border-gray-200"}" data-value="${opt.value}">
+              <div class="flex items-center justify-between">
+                <span>${opt.label}</span>
+                ${selectedValue === opt.value ? `<span class="w-6 h-6 rounded-full bg-primary text-white flex items-center justify-center text-xs">✓</span>` : ""}
+              </div>
+            </button>
+          `).join("")}
+        </div>
+
+        <!-- BUTTONS MOVED DIRECTLY UNDER OPTIONS, NO FIXED BOTTOM -->
+        <div class="mt-6 flex gap-3">
+          <button id="goPrevBottom" class="flex-1 bg-white border border-gray-200 text-gray-700 py-3 rounded-xl font-medium hover:bg-gray-50">
+            ← 上一题
+          </button>
+          ${isLast ? `
+            <button id="submitQuiz" class="flex-1 bg-primary hover:bg-primary-hover text-white py-3 rounded-xl font-medium ${selectedValue ? "" : "opacity-50 cursor-not-allowed"}">
+              提交评估
+            </button>
+          ` : `
+            <button id="goNext" class="flex-1 bg-primary hover:bg-primary-hover text-white py-3 rounded-xl font-medium ${selectedValue ? "" : "opacity-50 cursor-not-allowed"}">
+              下一题 →
+            </button>
+          `}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderResult(){
+  if(!state.result){
+    state.result = calcScore();
+  }
+  const { total, maxScore, scorePercentage, riskLevel, answerRecords, branch } = state.result;
+  const analysis = generatePresetAnalysis(scorePercentage, riskLevel, state.answers, branch);
+
+  const riskText = riskLevel === "low" ? "低风险" : riskLevel === "medium" ? "中风险" : "高风险";
+  const riskColor = riskLevel === "low" ? "#22c55e" : riskLevel === "medium" ? "#eab308" : "#ef4444";
+
+  const circumference = 2 * Math.PI * 70;
+  const offset = circumference - (scorePercentage / 100) * circumference;
+
+  return `
+    <div>
+      <div class="max-w-2xl mx-auto px-4 pt-4">
+        <div class="flex items-center justify-between">
+          <button id="backToHome" class="text-gray-600 hover:text-primary text-sm font-medium">← 返回首页</button>
+          <span class="text-primary text-sm font-semibold">评估报告</span>
+        </div>
+      </div>
+
+      <!-- 分数圆环卡片 -->
+      <div class="max-w-2xl mx-auto px-4 mt-4">
+        <div class="bg-white rounded-2xl border border-gray-50 shadow-sm p-8 text-center">
+          <div class="relative inline-flex items-center justify-center">
+            <svg width="180" height="180">
+              <circle class="ring-bg" cx="90" cy="90" r="70" stroke-width="12" fill="none"/>
+              <circle class="ring-progress" cx="90" cy="90" r="70" stroke="${riskColor}" stroke-width="12" fill="none"
+                stroke-dasharray="${circumference}" stroke-dashoffset="${offset}" stroke-linecap="round"/>
+            </svg>
+            <div class="absolute inset-0 flex flex-col items-center justify-center">
+              <div class="text-4xl font-bold text-gray-900">${scorePercentage}%</div>
+              <div class="text-xs text-gray-500 mt-1">通过率评估</div>
+            </div>
+          </div>
+
+          <div class="mt-4 flex items-center justify-center gap-2">
+            <span class="px-3 py-1 rounded-full text-xs font-bold" style="background:${riskColor}22;color:${riskColor}">
+              ${riskText}
+            </span>
+          </div>
+          <div class="text-sm text-gray-500 mt-2">总分 ${total} / ${maxScore}</div>
+        </div>
+      </div>
+
+      <!-- 总体评估 -->
+      <div class="max-w-2xl mx-auto px-4 mt-4">
+        <div class="bg-white rounded-2xl border border-gray-50 shadow-sm p-6">
+          <h3 class="font-bold text-gray-900 mb-3">总体评估</h3>
+          <p class="text-gray-700 text-sm leading-relaxed">${analysis.overall}</p>
+
+          <div class="mt-5">
+            <div class="flex items-center gap-2 text-green-600 font-semibold mb-2">
+              <span>✅</span> 竞争优势
+            </div>
+            <ul class="space-y-1 text-sm text-gray-700 list-disc pl-5">
+              ${analysis.strengths.map(s=>`<li>${s}</li>`).join("")}
+            </ul>
+          </div>
+
+          <div class="mt-5">
+            <div class="flex items-center gap-2 text-yellow-600 font-semibold mb-2">
+              <span>⚠️</span> 风险点
+            </div>
+            <ul class="space-y-1 text-sm text-gray-700 list-disc pl-5">
+              ${analysis.risks.map(r=>`<li>${r}</li>`).join("")}
+            </ul>
+          </div>
+
+          <div class="mt-5">
+            <div class="flex items-center gap-2 text-primary font-semibold mb-2">
+              <span>💡</span> 改善建议
+            </div>
+            <ul class="space-y-1 text-sm text-gray-700 list-disc pl-5">
+              ${analysis.suggestions.map(s=>`<li>${s}</li>`).join("")}
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- 底部按钮 -->
+      <div class="max-w-2xl mx-auto px-4 mt-6 mb-10 grid grid-cols-2 gap-3">
+        <button id="restartQuiz" class="bg-white border border-gray-200 text-gray-700 py-3 rounded-xl font-medium hover:bg-gray-50">
+          🔄 重新测评
+        </button>
+        <button id="backToHomeEnd" class="bg-primary hover:bg-primary-hover text-white py-3 rounded-xl font-medium">
+          返回首页
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+/* ===================== 事件绑定 ===================== */
+function bindEvents(){
+  $("startQuiz")?.addEventListener("click", ()=>{
+    state.page = "quiz";
+    state.currentIndex = 0;
+    render();
+  });
+
+  document.querySelectorAll(".option-btn").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      const value = btn.dataset.value;
+      state.answers[state.questions[state.currentIndex].id] = value;
+      render();
+    });
+  });
+
+  $("goPrev")?.addEventListener("click", goPrev);
+  $("goPrevBottom")?.addEventListener("click", goPrev);
+  $("goNext")?.addEventListener("click", goNext);
+  $("submitQuiz")?.addEventListener("click", submitQuiz);
+  $("backToHome")?.addEventListener("click", backToHome);
+  $("backToHomeEnd")?.addEventListener("click", backToHome);
+  $("restartQuiz")?.addEventListener("click", ()=>{
+    state.answers = {};
+    state.result = null;
+    state.page = "quiz";
+    state.currentIndex = 0;
+    render();
+  });
+}
+
+function goPrev(){
+  if(state.currentIndex === 0){
+    backToHome();
+  } else {
+    state.currentIndex--;
+    render();
+  }
+}
+
+function goNext(){
+  const currentQ = state.questions[state.currentIndex];
+  if(!state.answers[currentQ.id]) return;
+  state.currentIndex++;
+  render();
+}
+
+function submitQuiz(){
+  const currentQ = state.questions[state.currentIndex];
+  if(!state.answers[currentQ.id]) return;
+  state.page = "result";
+  state.result = null;
+  render();
+}
+
+function backToHome(){
+  state.page = "home";
+  state.answers = {};
+  state.currentIndex = 0;
+  state.result = null;
+  render();
+}
+
+/* ===================== 启动 ===================== */
+render();
+</script>
+</body>
+</html>
